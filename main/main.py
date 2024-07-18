@@ -59,7 +59,7 @@ WINDOW_NAME    = 'OpenLabeling'
 TRACKBAR_IMG   = 'Image'
 TRACKBAR_CLASS = 'Class'
 
-annotation_formats = {'PASCAL_VOC' : '.xml', 'YOLO_darknet' : '.txt'}
+annotation_formats = {'PASCAL_VOC' : '.xml', 'YOLO_darknet' : '.txt',r'side\rnn' : '.txt',r'side\yolo' : '.txt',}
 TRACKER_DIR = os.path.join(OUTPUT_DIR, '.tracker')
 
 DRAW_FROM_PASCAL = args.draw_from_PASCAL_files
@@ -1028,10 +1028,20 @@ if __name__ == '__main__':
 
         for ann_path in get_annotation_paths(img_path, annotation_formats):
             if not os.path.isfile(ann_path):
-                if '.txt' in ann_path:
+                if 'darknet' in ann_path or 'rnn' in ann_path:
                     open(ann_path, 'a').close()
                 elif '.xml' in ann_path:
                     create_PASCAL_VOC_xml(ann_path, abs_path, folder_name, image_name, img_height, img_width, depth)
+                elif 'yolo' in ann_path:
+                    path_darknet = ann_path.replace('side\\yolo', 'YOLO_darknet')
+                    with open(path_darknet) as fp:
+                        for idx, line in enumerate(fp):
+                            arr_for_side_yolo = line.split(" ")
+                            arr_for_side_yolo[0] = '3'
+                            line_for_side_yolo = ' '.join(arr_for_side_yolo)
+                            with open(ann_path, 'a') as myfile:
+                                myfile.write(line_for_side_yolo + '\n')
+
 
     # load class list
     with open('class_list.txt') as f:
