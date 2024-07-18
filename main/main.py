@@ -12,6 +12,7 @@ from tqdm import tqdm
 from lxml import etree
 import xml.etree.cElementTree as ET
 
+import tracking as tr
 
 DELAY = 20 # keyboard delay (in milliseconds)
 WITH_QT = False
@@ -414,6 +415,7 @@ def draw_bboxes_from_file(tmp_img, annotation_paths, width, height):
                     class_name, class_index, xmin, ymin, xmax, ymax = get_txt_object_data(obj, width, height)
                     #print('{} {} {} {} {}'.format(class_index, xmin, ymin, xmax, ymax))
                     img_objects.append([class_index, xmin, ymin, xmax, ymax])
+
                     color = class_rgb[class_index].tolist()
                     # draw bbox
                     cv2.rectangle(tmp_img, (xmin, ymin), (xmax, ymax), color, LINE_THICKNESS)
@@ -423,6 +425,7 @@ def draw_bboxes_from_file(tmp_img, annotation_paths, width, height):
                             tmp_img = draw_bbox_anchors(tmp_img, xmin, ymin, xmax, ymax, color)
                     font = cv2.FONT_HERSHEY_SIMPLEX
                     cv2.putText(tmp_img, class_name, (xmin, ymin - 5), font, 0.6, color, LINE_THICKNESS, cv2.LINE_AA)
+
     return tmp_img
 
 
@@ -655,8 +658,6 @@ def mouse_listener(event, x, y, flags, param):
     elif event == cv2.EVENT_LBUTTONUP:
         if dragBBox.anchor_being_dragged is not None:
             dragBBox.handler_left_mouse_up(x, y)
-
-
 
 def get_close_icon(x1, y1, x2, y2):
     percentage = 0.05
@@ -1078,6 +1079,7 @@ if __name__ == '__main__':
         if edges_on == True:
             # draw edges
             tmp_img = draw_edges(tmp_img)
+
         # draw vertical and horizontal guide lines
         draw_line(tmp_img, mouse_x, mouse_y, height, width, color)
         # write selected class
@@ -1095,6 +1097,7 @@ if __name__ == '__main__':
             dragBBox.handler_mouse_move(mouse_x, mouse_y)
         # draw already done bounding boxes
         tmp_img = draw_bboxes_from_file(tmp_img, annotation_paths, width, height)
+
         # if bounding box is selected add extra info
         if is_bbox_selected:
             tmp_img = draw_info_bb_selected(tmp_img)
@@ -1112,7 +1115,7 @@ if __name__ == '__main__':
 
         cv2.imshow(WINDOW_NAME, tmp_img)
         pressed_key = cv2.waitKey(DELAY)
-
+        print(tr.check_mouse_in_box(mouse_x, mouse_y, img_objects))
         if dragBBox.anchor_being_dragged is None:
             ''' Key Listeners START '''
             if pressed_key == ord('a') or pressed_key == ord('d'):
