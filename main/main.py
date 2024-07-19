@@ -431,13 +431,13 @@ def draw_bboxes_from_file(tmp_img, annotation_paths, width, height):
                 for idx, line in enumerate(fp):
                     obj = line
                     class_name, class_index, xmin, ymin, xmax, ymax = get_txt_object_data(obj, width, height)
-                    xmin = xmin - pixel_offset
-                    ymin = ymin - pixel_offset
+                    xmin_text = xmin - pixel_offset
+                    ymin_text = ymin - pixel_offset
                     img_objects.append([class_index, xmin, ymin, xmax, ymax])
 
                     color = color_side[class_index]
                     font = cv2.FONT_HERSHEY_SIMPLEX
-                    cv2.putText(tmp_img, str(class_index) , (xmin, ymin ), font, 0.9,color, LINE_THICKNESS, cv2.LINE_8)
+                    cv2.putText(tmp_img, str(class_index) , (xmin_text, ymin_text ), font, 0.9,color, LINE_THICKNESS, cv2.LINE_8)
     return tmp_img
 
 
@@ -566,25 +566,30 @@ def edit_bbox(obj_to_edit, action):
                 # edit YOLO file
                 with open(ann_path, 'r') as old_file:
                     lines = old_file.readlines()
-
+                side_path = ann_path.replace('side\\yolo', 'YOLO_darknet')
+                with open(ann_path, 'r') as old_file_side:
+                    lines_side = old_file_side.readlines()
                 yolo_line = yolo_format(class_index, (xmin, ymin), (xmax, ymax), width, height) # TODO: height and width ought to be stored
                 ind = findIndex(obj_to_edit)
                 i=0
 
-                with open(ann_path, 'w') as new_file:
-                    for line in lines:
+                with open(side_path, 'w') as new_file_side:
+                    with open(ann_path, 'w') as new_file:
+                        for index in range(len(lines)):
+                            line = lines[index]
+                            line_side = lines_side[index]
+                            if i != ind:
+                               new_file.write(line)
+                               new_file_side.write(line_side)
 
-                        if i != ind:
-                           new_file.write(line)
+                            elif 'change_class' in action:
+                                new_yolo_line = yolo_format(new_class_index, (xmin, ymin), (xmax, ymax), width, height)
+                                new_file.write(new_yolo_line + '\n')
+                            elif 'resize_bbox' in action:
+                                new_yolo_line = yolo_format(class_index, (new_x_left, new_y_top), (new_x_right, new_y_bottom), width, height)
+                                new_file.write(new_yolo_line + '\n')
 
-                        elif 'change_class' in action:
-                            new_yolo_line = yolo_format(new_class_index, (xmin, ymin), (xmax, ymax), width, height)
-                            new_file.write(new_yolo_line + '\n')
-                        elif 'resize_bbox' in action:
-                            new_yolo_line = yolo_format(class_index, (new_x_left, new_y_top), (new_x_right, new_y_bottom), width, height)
-                            new_file.write(new_yolo_line + '\n')
-
-                        i=i+1
+                            i=i+1
 
             elif '.xml' in ann_path:
                 # edit PASCAL VOC file
@@ -1052,12 +1057,12 @@ if __name__ == '__main__':
                             count_line += 1
                             arr_for_side_yolo = line.split(" ")
                             arr_for_side_yolo[0] = '3'
-                            line_for_side_yolo = ' '.join(arr_for_side_yolo)
-                            with open(ann_path, 'a') as myfile:
-                                myfile.write(line_for_side_yolo )
-                        if count_line == 0:
+                            line_for_side_yolo = ''.join(arr_for_side_yolo)
                             with open(ann_path, 'a') as myfile:
                                 myfile.write(line_for_side_yolo)
+                        if count_line == 0:
+                            with open(ann_path, 'a') as myfile:
+                                myfile.write("")
 
 
     # load class list
@@ -1168,6 +1173,7 @@ if __name__ == '__main__':
                 #if is_bbox_selected:
                 obj_to_edit = img_objects[selected_bbox]
                 edit_bbox(obj_to_edit, 'change_class:{}'.format(class_index))
+                pass
             # help key listener
             elif pressed_key == ord('h'):
                 text = ('[e] to show edges;\n'
