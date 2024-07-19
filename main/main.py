@@ -424,8 +424,20 @@ def draw_bboxes_from_file(tmp_img, annotation_paths, width, height):
                         if idx == selected_bbox:
                             tmp_img = draw_bbox_anchors(tmp_img, xmin, ymin, xmax, ymax, color)
                     font = cv2.FONT_HERSHEY_SIMPLEX
-                    cv2.putText(tmp_img, class_name, (xmin, ymin - 5), font, 0.6, color, LINE_THICKNESS, cv2.LINE_AA)
+                    cv2.putText(tmp_img, class_name, (xmin, ymin - 5), font, 0.99, color, LINE_THICKNESS, cv2.LINE_8)
+            pixel_offset = 15
+            ann_path = ann_path.replace('YOLO_darknet', 'side\\yolo')
+            with open(ann_path) as fp:
+                for idx, line in enumerate(fp):
+                    obj = line
+                    class_name, class_index, xmin, ymin, xmax, ymax = get_txt_object_data(obj, width, height)
+                    xmin = xmin - pixel_offset
+                    ymin = ymin - pixel_offset
+                    img_objects.append([class_index, xmin, ymin, xmax, ymax])
 
+                    color = color_side[class_index]
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    cv2.putText(tmp_img, str(class_index) , (xmin, ymin ), font, 0.9,color, LINE_THICKNESS, cv2.LINE_8)
     return tmp_img
 
 
@@ -1035,12 +1047,17 @@ if __name__ == '__main__':
                 elif 'yolo' in ann_path:
                     path_darknet = ann_path.replace('side\\yolo', 'YOLO_darknet')
                     with open(path_darknet) as fp:
+                        count_line = 0
                         for idx, line in enumerate(fp):
+                            count_line += 1
                             arr_for_side_yolo = line.split(" ")
                             arr_for_side_yolo[0] = '3'
                             line_for_side_yolo = ' '.join(arr_for_side_yolo)
                             with open(ann_path, 'a') as myfile:
-                                myfile.write(line_for_side_yolo + '\n')
+                                myfile.write(line_for_side_yolo )
+                        if count_line == 0:
+                            with open(ann_path, 'a') as myfile:
+                                myfile.write(line_for_side_yolo)
 
 
     # load class list
@@ -1055,6 +1072,7 @@ if __name__ == '__main__':
         (0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0), (0, 255, 255),
         (255, 0, 255), (192, 192, 192), (128, 128, 128), (128, 0, 0),
         (128, 128, 0), (0, 128, 0), (128, 0, 128), (0, 128, 128), (0, 0, 128)]
+    color_side = [(255, 0, 0),(0, 255, 0), (0, 0, 255),(0, 0, 0),]
     class_rgb = np.array(class_rgb)
     # If there are still more classes, add new colors randomly
     num_colors_missing = len(CLASS_LIST) - len(class_rgb)
@@ -1147,9 +1165,9 @@ if __name__ == '__main__':
                 draw_line(tmp_img, mouse_x, mouse_y, height, width, color)
                 set_class_index(class_index)
                 cv2.setTrackbarPos(TRACKBAR_CLASS, WINDOW_NAME, class_index)
-                if is_bbox_selected:
-                    obj_to_edit = img_objects[selected_bbox]
-                    edit_bbox(obj_to_edit, 'change_class:{}'.format(class_index))
+                #if is_bbox_selected:
+                obj_to_edit = img_objects[selected_bbox]
+                edit_bbox(obj_to_edit, 'change_class:{}'.format(class_index))
             # help key listener
             elif pressed_key == ord('h'):
                 text = ('[e] to show edges;\n'
