@@ -4,14 +4,33 @@ import glob
 import json
 import os
 import re
-
+from format import *
 import cv2
 import numpy as np
 from tqdm import tqdm
+from datetime import datetime
+
+import re
 
 from lxml import etree
 import xml.etree.cElementTree as ET
+colors_rnn = [
+  [255, 0, 0], # Красный
+  [0, 255, 0], # Зеленый
+  [0, 0, 255], # Синий
+  [255, 255, 0], # Желтый
+  [128, 0, 128], # Фиолетовый
+  [0, 191, 255], # Голубой
+  [255, 165, 0], # Оранжевый
+  [255, 192, 203], # Розовый
+  [128, 128, 128], # Серый
+  [165, 42, 42], # Коричневый
+  [0, 255, 255], # Бирюзовый
+  [255, 215, 0], # Золотой
+  [0, 0, 0] # Черный
+]
 
+import tracking as tr
 
 DELAY = 20 # keyboard delay (in milliseconds)
 WITH_QT = False
@@ -44,13 +63,21 @@ args = parser.parse_args()
 class_index = 0
 img_index = 0
 img = None
-img_objects = []
 
+img_objects = []
+rnn_objects = []
+all_ids = []
+letters_for_id = ['z', 'x', 'c', 'v', 'b', 'n', 'm', 'f', 'g', 'h', 'j', 'k', 'l' ]
+current_ids = []
+new_ids = []
+max_count_ids = 13
+index_history = 1000
+max_index_history = 1000
 INPUT_DIR  = args.input_dir
 OUTPUT_DIR = args.output_dir
 N_FRAMES   = args.n_frames
 TRACKER_TYPE = args.tracker
-
+ids_form_files = []
 if TRACKER_TYPE == "DASIAMRPN":
     from dasiamrpn import dasiamrpn
 
@@ -58,7 +85,7 @@ WINDOW_NAME    = 'OpenLabeling'
 TRACKBAR_IMG   = 'Image'
 TRACKBAR_CLASS = 'Class'
 
-annotation_formats = {'PASCAL_VOC' : '.xml', 'YOLO_darknet' : '.txt'}
+annotation_formats = {'PASCAL_VOC' : '.xml', 'YOLO_darknet' : '.txt',r'side\rnn' : '.json',r'side\yolo' : '.txt',}
 TRACKER_DIR = os.path.join(OUTPUT_DIR, '.tracker')
 
 DRAW_FROM_PASCAL = args.draw_from_PASCAL_files
@@ -194,7 +221,8 @@ def display_text(text, time):
         print(text)
 
 def set_img_index(x):
-    global img_index, img
+    global img_index, img, current_ids, new_ids
+
     img_index = x
     img_path = IMAGE_PATH_LIST[img_index]
     img = cv2.imread(img_path)
@@ -202,6 +230,35 @@ def set_img_index(x):
     display_text(text, 1000)
 
 
+    if x != 0:
+        img_path = IMAGE_PATH_LIST[img_index-1]
+        filename = os.path.basename(img_path)[:-3]
+        rnn_path = rf'output/side/rnn/{filename}json'
+        yolo_path = rf'output/side/yolo/{filename}txt'
+        with open(yolo_path, 'r') as old_file:
+            count_line = len(old_file.readlines())
+        json_data = json.load(open(rnn_path, encoding='utf-8'))
+        current_ids = []
+        new_ids = []
+        if count_line == len(json_data):
+            print("\nCurrent id: ")
+            for index in range(len(json_data)):
+                item = json_data[index]
+                if item['id'] != '':
+                    current_ids.append(item['id'])
+                    direction =['left','right'][int(item["x"] < 960)]
+                    print(f'{letters_for_id[index]} - {item["id"]} - {item["name_one"]} - {direction}')
+            print("New id: ", end='')
+            for index in range(len(current_ids), max_count_ids):
+                new_id = np.random.randint(0, 9999999)
+                new_ids.append(new_id)
+                print(f"{letters_for_id[index]} - {new_id}", end=' ')
+        else:
+            print("New id: ", end='')
+            for index in range(max_count_ids):
+                new_id = np.random.randint(0, 9999999)
+                new_ids.append(new_id)
+                print(f"{letters_for_id[index]} - {new_id}", end=' ')
 def set_class_index(x):
     global class_index
     class_index = x
@@ -237,25 +294,6 @@ def draw_line(img, x, y, height, width, color):
     cv2.line(img, (x, 0), (x, height), color, LINE_THICKNESS)
     cv2.line(img, (0, y), (width, y), color, LINE_THICKNESS)
 
-
-def yolo_format(class_index, point_1, point_2, width, height):
-    # YOLO wants everything normalized
-    # Order: class x_center y_center x_width y_height
-    x_center = float((point_1[0] + point_2[0]) / (2.0 * width) )
-    y_center = float((point_1[1] + point_2[1]) / (2.0 * height))
-    x_width = float(abs(point_2[0] - point_1[0])) / width
-    y_height = float(abs(point_2[1] - point_1[1])) / height
-    items = map(str, [class_index, x_center, y_center, x_width, y_height])
-    return ' '.join(items)
-
-
-def voc_format(class_name, point_1, point_2):
-    # Order: class_name xmin ymin xmax ymax
-    xmin, ymin = min(point_1[0], point_2[0]), min(point_1[1], point_2[1])
-    xmax, ymax = max(point_1[0], point_2[0]), max(point_1[1], point_2[1])
-    items = map(str, [class_name, xmin, ymin, xmax, ymax])
-    return items
-
 def findIndex(obj_to_find):
     #return [(ind, img_objects[ind].index(obj_to_find)) for ind in xrange(len(img_objects)) if item in img_objects[ind]]
     ind = -1
@@ -284,6 +322,11 @@ def append_bb(ann_path, line, extension):
     if '.txt' in extension:
         with open(ann_path, 'a') as myfile:
             myfile.write(line + '\n') # append line
+    elif '.json' in extension:
+        json_data = json.load(open(ann_path, encoding='utf-8'))
+        json_data.append(line)
+        with open(ann_path, 'w') as outfile:
+            json.dump(json_data, outfile, sort_keys=True, indent=4)
     elif '.xml' in extension:
         class_name, xmin, ymin, xmax, ymax = line
 
@@ -304,21 +347,6 @@ def append_bb(ann_path, line, extension):
 
         xml_str = ET.tostring(annotation)
         write_xml(xml_str, ann_path)
-
-
-def yolo_to_voc(x_center, y_center, x_width, y_height, width, height):
-    x_center *= float(width)
-    y_center *= float(height)
-    x_width *= float(width)
-    y_height *= float(height)
-    x_width /= 2.0
-    y_height /= 2.0
-    xmin = int(round(x_center - x_width))
-    ymin = int(round(y_center - y_height))
-    xmax = int(round(x_center + x_width))
-    ymax = int(round(y_center + y_height))
-    return xmin, ymin, xmax, ymax
-
 
 def get_xml_object_data(obj):
     class_name = obj.find('name').text
@@ -414,6 +442,7 @@ def draw_bboxes_from_file(tmp_img, annotation_paths, width, height):
                     class_name, class_index, xmin, ymin, xmax, ymax = get_txt_object_data(obj, width, height)
                     #print('{} {} {} {} {}'.format(class_index, xmin, ymin, xmax, ymax))
                     img_objects.append([class_index, xmin, ymin, xmax, ymax])
+
                     color = class_rgb[class_index].tolist()
                     # draw bbox
                     cv2.rectangle(tmp_img, (xmin, ymin), (xmax, ymax), color, LINE_THICKNESS)
@@ -422,7 +451,30 @@ def draw_bboxes_from_file(tmp_img, annotation_paths, width, height):
                         if idx == selected_bbox:
                             tmp_img = draw_bbox_anchors(tmp_img, xmin, ymin, xmax, ymax, color)
                     font = cv2.FONT_HERSHEY_SIMPLEX
-                    cv2.putText(tmp_img, class_name, (xmin, ymin - 5), font, 0.6, color, LINE_THICKNESS, cv2.LINE_AA)
+                    cv2.putText(tmp_img, class_name, (xmin, ymin - 5), font, 0.99, color, LINE_THICKNESS, cv2.LINE_8)
+            pixel_offset = 15
+            ann_path = ann_path.replace('YOLO_darknet', 'side\\yolo')
+            with open(ann_path) as fp:
+                for idx, line in enumerate(fp):
+                    obj = line
+                    class_name, class_index, xmin, ymin, xmax, ymax = get_txt_object_data(obj, width, height)
+
+                    xmin_text = xmin - pixel_offset
+                    ymin_text = ymin - pixel_offset
+                    #img_objects.append([class_index, xmin, ymin, xmax, ymax])
+
+                    color = color_side[class_index]
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    # for convenience look, so that the countdown starts from 1 and not from 0
+                    class_index += 1
+                    cv2.putText(tmp_img, str(class_index) , (xmin_text, ymin_text ), font, 0.9,color, 2, cv2.LINE_8)
+        ann_path = ann_path.replace('yolo', 'rnn').replace('txt', 'json')
+        json_data = json.load(open(ann_path, encoding='utf-8'))
+        for index in range(len(json_data)):
+            item = json_data[index]
+
+            cv2.putText(tmp_img, f'ID: {item["id"].split("--")[0]}', (item["x"], item["y"]), font, 0.6, colors_rnn[index], 2, cv2.LINE_8)
+            cv2.putText(tmp_img, f'{item["id"].split("--")[1]}', (item["x"], item["y"]+20), font, 0.6,colors_rnn[index], 2, cv2.LINE_8)
     return tmp_img
 
 
@@ -462,14 +514,26 @@ def is_mouse_inside_delete_button():
                 return True
     return False
 
+def has_letters(text):
+  for char in text:
+    if char.isalpha():
+      return True
+  return False
 
 def edit_bbox(obj_to_edit, action):
+    global img_objects, all_ids, current_ids
     ''' action = `delete`
                  `change_class:new_class_index`
                  `resize_bbox:new_x_left:new_y_top:new_x_right:new_y_bottom`
+                 `change_side:new_class_index`
+                 `change_id|new_class_id`
     '''
     if 'change_class' in action:
         new_class_index = int(action.split(':')[1])
+    elif 'change_id' in action:
+        new_class_id = action.split('|')[1]
+    elif 'change_side' in action:
+        new_class_index_side = int(action.split(':')[1])
     elif 'resize_bbox' in action:
         new_x_left = max(0, int(action.split(':')[1]))
         new_y_top = max(0, int(action.split(':')[2]))
@@ -547,30 +611,34 @@ def edit_bbox(obj_to_edit, action):
         class_index, xmin, ymin, xmax, ymax = map(int, obj_to_edit)
 
         for ann_path in get_annotation_paths(path, annotation_formats):
-            if '.txt' in ann_path:
+            if 'darknet' in ann_path and 'change_id' not in action:
+                side_path = ann_path.replace( 'YOLO_darknet', 'side\\yolo')
                 # edit YOLO file
                 with open(ann_path, 'r') as old_file:
                     lines = old_file.readlines()
-
-                yolo_line = yolo_format(class_index, (xmin, ymin), (xmax, ymax), width, height) # TODO: height and width ought to be stored
+                with open(side_path, 'r') as old_file_side:
+                    lines_side = old_file_side.readlines()
                 ind = findIndex(obj_to_edit)
                 i=0
-
-                with open(ann_path, 'w') as new_file:
-                    for line in lines:
-
-                        if i != ind:
-                           new_file.write(line)
-
-                        elif 'change_class' in action:
-                            new_yolo_line = yolo_format(new_class_index, (xmin, ymin), (xmax, ymax), width, height)
-                            new_file.write(new_yolo_line + '\n')
-                        elif 'resize_bbox' in action:
-                            new_yolo_line = yolo_format(class_index, (new_x_left, new_y_top), (new_x_right, new_y_bottom), width, height)
-                            new_file.write(new_yolo_line + '\n')
-
-                        i=i+1
-
+                with open(side_path, 'w') as new_file_side:
+                    with open(ann_path, 'w') as new_file:
+                        for index in range(len(lines)):
+                            line = lines[index]
+                            line_side = lines_side[index]
+                            if i != ind:
+                               new_file.write(line)
+                               new_file_side.write(line_side)
+                            elif 'change_class' in action:
+                                new_yolo_line = yolo_format(new_class_index, (xmin, ymin), (xmax, ymax), width, height)
+                                new_file.write(new_yolo_line + '\n')
+                            elif 'resize_bbox' in action:
+                                new_yolo_line = yolo_format(class_index, (new_x_left, new_y_top), (new_x_right, new_y_bottom), width, height)
+                                new_file.write(new_yolo_line + '\n')
+                            elif 'change_side' in action:
+                                new_yolo_line = yolo_format(new_class_index_side, (xmin, ymin), (xmax, ymax), width, height)
+                                new_file_side.write(new_yolo_line + '\n')
+                                new_file.write(line)
+                            i=i+1
             elif '.xml' in ann_path:
                 # edit PASCAL VOC file
                 tree = ET.parse(ann_path)
@@ -598,6 +666,39 @@ def edit_bbox(obj_to_edit, action):
 
                 xml_str = ET.tostring(annotation)
                 write_xml(xml_str, ann_path)
+            elif 'rnn' in ann_path:
+                ind = findIndex(obj_to_edit)
+                i=0
+                json_data = json.load(open(ann_path, encoding='utf-8'))
+                new_data = []
+                for item in json_data:
+                    if i != ind:
+                        new_data.append(item)
+                    elif 'change_side' in action:
+                        item['side'] = int(new_class_index_side)
+                        new_data.append(item)
+                    elif 'change_id' in action:
+                        if index_history == max_index_history:
+                            if has_letters(new_class_id):
+                                item['id'] = str(new_class_id)
+                            else:
+                                text_id = f'{item["name_one"][:3]}-w={item["w"]}-h={item["h"]}--{datetime.today()}'
+                                item['id'] = text_id
+                                all_ids[len(current_ids)] = text_id
+                                current_ids.append(text_id)
+                        else:
+                            if index_history < len(ids_form_files):
+                                item['id'] = ids_form_files[index_history]
+                        new_data.append(item)
+
+                    i+=1
+                if 'change_id' in action:
+                    print("\nCurrent id: ")
+                    for index in range(len(current_ids)):
+                        print(f'{letters_for_id[index]} - {current_ids[index]}')
+                        i += 1
+                with open(ann_path, 'w') as outfile:
+                    json.dump(new_data, outfile, sort_keys=True, indent=4)
 
 
 def mouse_listener(event, x, y, flags, param):
@@ -655,8 +756,6 @@ def mouse_listener(event, x, y, flags, param):
     elif event == cv2.EVENT_LBUTTONUP:
         if dragBBox.anchor_being_dragged is not None:
             dragBBox.handler_left_mouse_up(x, y)
-
-
 
 def get_close_icon(x1, y1, x2, y2):
     percentage = 0.05
@@ -754,15 +853,20 @@ def create_PASCAL_VOC_xml(xml_path, abs_path, folder_name, image_name, img_heigh
     write_xml(xml_str, xml_path)
 
 
-def save_bounding_box(annotation_paths, class_index, point_1, point_2, width, height):
+def save_bounding_box(annotation_paths, class_index, point_1, point_2, width, height, img=None):
     for ann_path in annotation_paths:
-        if '.txt' in ann_path:
+        if 'darknet' in ann_path:
             line = yolo_format(class_index, point_1, point_2, width, height)
             append_bb(ann_path, line, '.txt')
         elif '.xml' in ann_path:
             line = voc_format(CLASS_LIST[class_index], point_1, point_2)
             append_bb(ann_path, line, '.xml')
-
+        elif 'yolo' in ann_path:
+            line = yolo_format('1', point_1, point_2, width, height)
+            append_bb(ann_path, line, '.txt')
+        elif 'rnn' in ann_path:
+            line = rnn_format(class_index, point_1, point_2,img)
+            append_bb(ann_path, line, '.json')
 def is_frame_from_video(img_path):
     for video_name in VIDEO_NAME_DICT:
         video_dir = os.path.join(INPUT_DIR, video_name)
@@ -965,7 +1069,10 @@ def complement_bgr(color):
     hi = max(color)
     k = lo + hi
     return tuple(k - u for u in color)
-
+def get_ids_from_history(index):
+    global index_history
+    index_history = index
+    #print(index_history)
 # change to the directory of this script
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1027,10 +1134,37 @@ if __name__ == '__main__':
 
         for ann_path in get_annotation_paths(img_path, annotation_formats):
             if not os.path.isfile(ann_path):
-                if '.txt' in ann_path:
+                if 'darknet' in ann_path:
                     open(ann_path, 'a').close()
                 elif '.xml' in ann_path:
                     create_PASCAL_VOC_xml(ann_path, abs_path, folder_name, image_name, img_height, img_width, depth)
+                elif 'yolo' in ann_path:
+                    path_darknet = ann_path.replace('side\\yolo', 'YOLO_darknet')
+                    with open(path_darknet) as fp:
+                        count_line = 0
+                        for idx, line in enumerate(fp):
+                            count_line += 1
+                            arr_for_side_yolo = line.split(" ")
+                            arr_for_side_yolo[0] = '1 '
+                            line_for_side_yolo = ' '.join(arr_for_side_yolo)
+                            with open(ann_path, 'a') as myfile:
+                                myfile.write(line_for_side_yolo)
+                        if count_line == 0:
+                            with open(ann_path, 'a') as myfile:
+                                myfile.write("")
+                elif 'rnn' in ann_path:
+                    with open(ann_path, 'a') as myfile:
+                        json_arr = []
+                        path_darknet = ann_path.replace('side\\rnn', 'YOLO_darknet').replace('json','txt')
+                        with open(path_darknet) as fp:
+                            for idx, line in enumerate(fp):
+                                class_id, x_center, y_center, x_width, y_height = line.split(" ")
+                                class_id, x_center, y_center, x_width, y_height = int(class_id), float(x_center), float(y_center), float(x_width), float(y_height)
+                                xmin, ymin, xmax, ymax = yolo_to_voc(x_center, y_center, x_width, y_height,  1920, 1080 )
+                                json_item = rnn_format(class_id, (xmin, ymin), (xmax, ymax), test_img)
+                                json_arr.append(json_item)
+                        json.dump(json_arr, myfile, sort_keys=True, indent=4)
+
 
     # load class list
     with open('class_list.txt') as f:
@@ -1044,6 +1178,7 @@ if __name__ == '__main__':
         (0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0), (0, 255, 255),
         (255, 0, 255), (192, 192, 192), (128, 128, 128), (128, 0, 0),
         (128, 128, 0), (0, 128, 0), (128, 0, 128), (0, 128, 128), (0, 0, 128)]
+    color_side = [(255, 0, 0),(0, 255, 0), (0, 0, 255),(0, 0, 0)]
     class_rgb = np.array(class_rgb)
     # If there are still more classes, add new colors randomly
     num_colors_missing = len(CLASS_LIST) - len(class_rgb)
@@ -1058,7 +1193,7 @@ if __name__ == '__main__':
 
     # selected image
     cv2.createTrackbar(TRACKBAR_IMG, WINDOW_NAME, 0, last_img_index, set_img_index)
-
+    cv2.createTrackbar("Id", WINDOW_NAME, max_index_history, max_index_history, get_ids_from_history)
     # selected class
     if last_class_index != 0:
         cv2.createTrackbar(TRACKBAR_CLASS, WINDOW_NAME, 0, last_class_index, set_class_index)
@@ -1069,15 +1204,20 @@ if __name__ == '__main__':
 
     display_text('Welcome!\n Press [h] for help.', 4000)
 
+    # if not json_data:
+    #    rnn_objects = json_data
+    #    pass
     # loop
     while True:
         color = class_rgb[class_index].tolist()
         # clone the img
         tmp_img = img.copy()
+
         height, width = tmp_img.shape[:2]
         if edges_on == True:
             # draw edges
             tmp_img = draw_edges(tmp_img)
+
         # draw vertical and horizontal guide lines
         draw_line(tmp_img, mouse_x, mouse_y, height, width, color)
         # write selected class
@@ -1095,6 +1235,7 @@ if __name__ == '__main__':
             dragBBox.handler_mouse_move(mouse_x, mouse_y)
         # draw already done bounding boxes
         tmp_img = draw_bboxes_from_file(tmp_img, annotation_paths, width, height)
+
         # if bounding box is selected add extra info
         if is_bbox_selected:
             tmp_img = draw_info_bb_selected(tmp_img)
@@ -1105,14 +1246,12 @@ if __name__ == '__main__':
             # if second click
             if point_2[0] != -1:
                 # save the bounding box
-                save_bounding_box(annotation_paths, class_index, point_1, point_2, width, height)
+                save_bounding_box(annotation_paths, class_index, point_1, point_2, width, height, tmp_img)
                 # reset the points
                 point_1 = (-1, -1)
                 point_2 = (-1, -1)
-
         cv2.imshow(WINDOW_NAME, tmp_img)
         pressed_key = cv2.waitKey(DELAY)
-
         if dragBBox.anchor_being_dragged is None:
             ''' Key Listeners START '''
             if pressed_key == ord('a') or pressed_key == ord('d'):
@@ -1137,6 +1276,37 @@ if __name__ == '__main__':
                 if is_bbox_selected:
                     obj_to_edit = img_objects[selected_bbox]
                     edit_bbox(obj_to_edit, 'change_class:{}'.format(class_index))
+            index_box_for_change = tr.check_mouse_in_box(mouse_x, mouse_y, img_objects)
+            if index_box_for_change != -1:
+                if pressed_key == ord('1'):
+                    obj_to_edit = img_objects[index_box_for_change]
+                    edit_bbox(obj_to_edit, 'change_side:{}'.format("0"))
+                elif pressed_key == ord('2'):
+                    obj_to_edit = img_objects[index_box_for_change]
+                    edit_bbox(obj_to_edit, 'change_side:{}'.format("1"))
+                elif pressed_key == ord('3'):
+                    obj_to_edit = img_objects[index_box_for_change]
+                    edit_bbox(obj_to_edit, 'change_side:{}'.format("2"))
+                elif pressed_key == ord('4'):
+                    obj_to_edit = img_objects[index_box_for_change]
+                    edit_bbox(obj_to_edit, 'change_side:{}'.format("3"))
+                keys_to_ids = {ord('z'): 0, ord('x'): 1, ord('c'): 2, ord('v'): 3, ord('b'): 4, ord('n'): 5,
+                               ord('m'): 6, ord('f'): 7, ord('g'): 8, ord('h'): 9, ord('j'): 10, ord('k'): 11,
+                               ord('l'): 12, }
+                if pressed_key in keys_to_ids:
+                    filename = os.path.basename(img_path)[:-3]
+                    rnn_path = rf'output/side/rnn/{filename}json'
+                    json_data = json.load(open(rnn_path, encoding='utf-8'))
+                    if not json_data:
+                        for id, x1, y1, x2, y2 in img_objects:
+                            json_data.append(rnn_format(id, (x1, y1), (x2, y2), tmp_img))
+                    with open(rnn_path, 'w') as outfile:
+                        json.dump(json_data, outfile, sort_keys=True, indent=4)
+
+                    obj_to_edit = img_objects[index_box_for_change]
+                    all_ids = current_ids + new_ids
+                    lll = all_ids[keys_to_ids[pressed_key]]
+                    edit_bbox(obj_to_edit, 'change_id|{}'.format(all_ids[keys_to_ids[pressed_key]]))
             # help key listener
             elif pressed_key == ord('h'):
                 text = ('[e] to show edges;\n'
@@ -1174,6 +1344,17 @@ if __name__ == '__main__':
                             class_index = obj[0]
                             color = class_rgb[class_index].tolist()
                             label_tracker.start_tracker(json_file_data, json_file_path, img_path, obj, color, annotation_formats)
+            elif pressed_key == 0:
+                ids_form_files = []
+                for file in os.listdir(r'D:\Urban\yolov4\OpenLabeling\main\output\side\rnn\\'):
+                    json_path = rf'D:\Urban\yolov4\OpenLabeling\main\output\side\rnn\{file}'
+                    json_data = json.load(open(json_path, encoding='utf-8'))
+                    for item in json_data:
+                        if item['id'] not in ids_form_files and len(item['id']) > 1:
+                            ids_form_files.append(item['id'])
+                for index in range(len(ids_form_files)):
+                    print(index, ids_form_files[index])
+
             # quit key listener
             elif pressed_key == ord(']'):
                 break
