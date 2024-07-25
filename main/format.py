@@ -1,3 +1,4 @@
+from termcolor import colored
 import math
 from tracking import find_sign
 from sign_config import *
@@ -53,7 +54,7 @@ def rnn_format(class_id, point_1, point_2, img):
         "h": height_box,
         "x": x,
         "y": y,
-        "id": 0,
+        "id": '',
         "side":0,
     }
     return my_json
